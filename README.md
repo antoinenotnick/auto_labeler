@@ -23,8 +23,8 @@ The core functionality lives in the `sam_segmentation` package (`SAMSegmenter`, 
 ### 1. Clone the repository
 
 ```bash
-git clone <your-repo-url> auto-labeler
-cd auto-labeler
+git clone https://github.com/antoinenotnick/auto_labeler
+cd auto_labeler
 ```
 
 ### 2. Python environment
@@ -199,10 +199,4 @@ python examples.py
 - **Model weights / SAM‑3**: This project expects a SAM‑3 model available through the Hugging Face ecosystem. Check `segmenter.py` for how the model is loaded and confirm you have the right env variables / tokens configured.
 - **Performance**: Large images or many masks per image can be memory‑intensive; consider resizing images or adjusting thresholds (`mask_threshold`, `polygon_tolerance`) to trade accuracy for speed.
 - **Coordinate systems**: COCO exports use pixel coordinates in the standard COCO format (xywh). Polygons are generated from masks using `mask_to_polygon`.
-
----
-
-## License
-
-Add your license information here (e.g. MIT, Apache‑2.0), or link to a `LICENSE` file if present.
 
