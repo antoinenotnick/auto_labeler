@@ -1,0 +1,24 @@
+# Core dependencies
+numpy>=1.24.0
+opencv-python>=4.8.0
+Pillow>=10.0.0
+
+# PyTorch ecosystem (install separately with CUDA support - see README)
+# torch>=2.7.0
+# torchvision>=0.20.0
+# torchaudio>=2.7.0
+
+# SAM3 dependencies
+einops>=0.7.0
+triton-windows>=3.0.0
+decord>=0.6.0
+transformers>=4.40.0
+
+# Annotation and visualization
+pycocotools>=2.0.7
+matplotlib>=3.7.0
+
+# Hugging Face authentication
+huggingface-hub>=0.23.0
+
+python-dotenv>=1.0.0
