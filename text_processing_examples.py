@@ -17,13 +17,13 @@ from sam_segmentation import (
 SCRIPT_DIR = Path(__file__).parent
 
 
-def example_1_simple_batch_processing(): # <------------------------------ this is the batch processing function
+def example_1_simple_batch_processing():
     """Example 1: Simple batch processing with default settings."""
     print("=" * 60)
     print("Example 1: Simple Batch Processing")
     print("=" * 60)
 
-    segmenter = SAMSegmenter(text_prompt="pole") # <------------------------------ figure out a way to turn this into an image prompt
+    segmenter = SAMSegmenter(text_prompt="pole")
     results = segmenter.process_directory(SCRIPT_DIR / "images")
 
     print(f"\nProcessed {len(results)} images")
@@ -65,7 +65,7 @@ def example_3_single_image_processing():
     print(f"Scores: {result.scores}")
 
 
-def example_4_custom_export(): # <-----------------------------------------------------Segments and exports to COCO json
+def example_4_custom_export(): # Segments and exports to COCO json
     """Example 4: Process without exports, then export with custom settings."""
     print("\n" + "=" * 60)
     print("Example 4: Custom Export")
@@ -215,7 +215,7 @@ def example_9_export_results_separately():
         print(f"  {format_name}: {paths}")
 
 
-def example_10_multiple_object_prompts(): # <-----------------------------------------could be useful for multiple object types in one pass
+def example_10_multiple_object_prompts(): # multiple object types in one pass
     """Example 10: Segment multiple object types in one pass."""
     print("\n" + "=" * 60)
     print("Example 10: Multiple Object Prompts")
@@ -243,10 +243,10 @@ def main():
 
     # Uncomment the examples you want to run:
 
-    # example_1_simple_batch_processing()
+    example_1_simple_batch_processing()
     # example_2_custom_configuration()
     # example_3_single_image_processing()
-    example_4_custom_export()
+    # example_4_custom_export()
     # example_5_visualization_only()
     # example_6_export_different_formats()
     # example_7_custom_output_directories()

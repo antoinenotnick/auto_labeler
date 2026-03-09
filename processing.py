@@ -1,4 +1,5 @@
 from pathlib import Path
+
 import cv2
 import numpy as np
 
@@ -8,30 +9,102 @@ from sam_segmentation.utils import load_image_with_exif
 # Get the directory where this script is located
 SCRIPT_DIR = Path(__file__).parent
 
-# Object to segment
-OBJECT = "insulator"
+# Image to process for visual or text‑prompt examples
+IMG_PATH = SCRIPT_DIR / "images" / "<IMAGE NAME HERE>.jpg"
 
-# Visual prompt: bounding box in pixel coordinates (x, y, w, h), starting from top left corner
-# box_prompt = [1000.0, 1550.0, 3000.0, 850.0] # pole in image 1pole-down.jpg
-# box_prompt = [500.0, 250.0, 25.0, 60.0] # insulator in image pole_ex2.jpg
-box_prompt = [1500.0, 1200.0, 500.0, 350.0] # area in image image2.JPG
+# Object label / text prompt
+OBJECT = "<OBJECT NAME HERE>"
+
+# Fallback visual prompt: (x, y, w, h) in pixels from top‑left corner
+box_prompt = [0.0, 0.0, 0.0, 0.0]
 
 
-def single_image_processing():
-    """Process a single image."""
+def select_box_prompt(image_path: Path) -> list[float] | None:
+    """
+    Open an interactive window to draw a visual box prompt on an image.
+
+    The user drags a rectangle with the mouse; on confirmation, the box
+    is returned in pixel coordinates as `[x, y, w, h]`.
+
+    Args:
+        image_path: Path to the image where the box will be drawn.
+
+    Returns:
+        A list `[x, y, w, h]` in original image pixels, or `None` if the
+        user cancels (ESC or q).
+    """
+    # Load with EXIF handling, then convert to OpenCV BGR
+    pil_img = load_image_with_exif(image_path, enable_exif=True)
+    img_rgb = np.array(pil_img.convert("RGB"))
+    img_bgr = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR)
+
+    clone = img_bgr.copy()
+    drawing = {"start": None, "end": None, "dragging": False}
+    window_name = "Draw visual box prompt (ENTER=accept, ESC=cancel)"
+
+    def on_mouse(event, x, y, flags, _param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            drawing["start"] = (x, y)
+            drawing["end"] = (x, y)
+            drawing["dragging"] = True
+        elif event == cv2.EVENT_MOUSEMOVE and drawing["dragging"]:
+            drawing["end"] = (x, y)
+        elif event == cv2.EVENT_LBUTTONUP and drawing["dragging"]:
+            drawing["end"] = (x, y)
+            drawing["dragging"] = False
+
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.setMouseCallback(window_name, on_mouse)
+
+    while True:
+        frame = clone.copy()
+        if drawing["start"] and drawing["end"]:
+            x0, y0 = drawing["start"]
+            x1, y1 = drawing["end"]
+            cv2.rectangle(frame, (x0, y0), (x1, y1), (0, 255, 255), 2)
+
+        cv2.imshow(window_name, frame)
+        key = cv2.waitKey(20) & 0xFF
+
+        # ENTER or Space to accept
+        if key in (13, 32):  # Enter or Space
+            if drawing["start"] and drawing["end"]:
+                x0, y0 = drawing["start"]
+                x1, y1 = drawing["end"]
+                x_min, x_max = sorted([x0, x1])
+                y_min, y_max = sorted([y0, y1])
+                w = x_max - x_min
+                h = y_max - y_min
+                cv2.destroyWindow(window_name)
+                if w > 0 and h > 0:
+                    return [float(x_min), float(y_min), float(w), float(h)]
+            # If no valid box, keep waiting
+
+        # ESC or q to cancel
+        if key in (27, ord("q")):
+            cv2.destroyWindow(window_name)
+            return None
+
+def single_image_processing_with_text_prompt():
+    """
+    Process a single image using only a text prompt.
+
+    Uses `OBJECT` as the text prompt and `IMG_PATH` as the input image,
+    saving outputs to `output/`.
+    """
     print("\n" + "=" * 60)
     print("Single Image Processing")
     print("=" * 60)
 
     segmenter = SAMSegmenter(
-        text_prompt = None,
-        box_prompt=box_prompt,
-        category_name=OBJECT
+        text_prompt=OBJECT,
+        category_name=OBJECT,
     )
+
     result = segmenter.process_image(
-        SCRIPT_DIR / "images" / "image2.JPG",
-        output_dir=SCRIPT_DIR / "output"
-        ) # sample, change if needed
+        IMG_PATH,
+        output_dir=SCRIPT_DIR / "output",
+    )
 
     print(f"Image: {result.image_path.name}")
     print(f"Size: {result.image_size[0]}x{result.image_size[1]}")
@@ -41,61 +114,96 @@ def single_image_processing():
     return result
 
 
-def simple_batch_processing():
-    """Simple batch processing with default settings."""
-    print("=" * 60)
-    print("Simple Batch Processing")
-    print("=" * 60)
-
-    segmenter = SAMSegmenter(
-        text_prompt = None,
-        box_prompt=box_prompt,
-        category_name=OBJECT
-    )
-    result = segmenter.process_directory(
-        SCRIPT_DIR / "images",
-        output_dir=SCRIPT_DIR / "output",
-    )
-
-    print(f"\nProcessed {len(result)} images")
-    for result in result:
-        print(f"  - {result.image_path.name}: {result.num_detections} detections")
-
-    return result 
-
-
-def box_prompt_batch_processing():
+def single_image_processing_with_box_prompt():
     """
-    Use a single visual box prompt to search a batch of images.
+    Process a single image using an interactive visual box prompt.
 
-    Args:
-        images_dir: Directory of images to scan (default: SCRIPT_DIR / \"images\").
-        box: Box prompt (x, y, w, h) in pixel coordinates. If None, uses global box_prompt.
-        category_name: Category label to assign to detections from the box prompt.
-
-    Returns:
-        List of SegmentationResult objects for images that had at least one detection.
+    The user draws a box on `IMG_PATH`; that box is passed as a visual
+    prompt to SAM3 for that image only.
     """
+    print("\n" + "=" * 60)
+    print("Single Image Processing")
+    print("=" * 60)
+
+    # Let the user draw a visual box prompt; fall back to the default if cancelled
+    user_box = select_box_prompt(IMG_PATH)
+    current_box = user_box if user_box is not None else box_prompt
+    if user_box is not None:
+        print(f"Using user‑selected box_prompt: {current_box}")
+    else:
+        print(f"No box selected; using fallback box_prompt: {current_box}")
+
     segmenter = SAMSegmenter(
         text_prompt=None,
-        box_prompt=box_prompt,
+        box_prompt=current_box,
         category_name=OBJECT,
-        save_overlay=True,
     )
 
-    result = segmenter.process_directory(
-        SCRIPT_DIR / "images",
+    result = segmenter.process_image(
+        IMG_PATH,
         output_dir=SCRIPT_DIR / "output",
     )
+
+    print(f"Image: {result.image_path.name}")
+    print(f"Size: {result.image_size[0]}x{result.image_size[1]}")
+    print(f"Detections: {result.num_detections}")
+    print(f"Scores: {result.scores}")
 
     return result
 
 
+def text_prompt_batch_processing():
+    """
+    Batch‑process all images in `SCRIPT_DIR / "images"` using only a text prompt.
+
+    Uses `OBJECT` as the text prompt and writes outputs into `output/`.
+    """
+    print("=" * 60)
+    print("Text Prompt Batch Processing")
+    print("=" * 60)
+
+    segmenter = SAMSegmenter(
+        text_prompt=OBJECT,
+        category_name=OBJECT,
+        save_overlay=True,
+    )
+
+    results = segmenter.process_directory(
+        SCRIPT_DIR / "images",
+        output_dir=SCRIPT_DIR / "output",
+    )
+
+    print(f"\nProcessed {len(results)} images")
+    for res in results:
+        print(f"  - {res.image_path.name}: {res.num_detections} detections")
+
+    return results 
+
+
+def box_prompt_batch_processing():
+    """
+    Batch processing using a visual exemplar selected on the reference image.
+
+    Steps:
+      1) Show the reference image (`IMG_PATH`) and let the user draw a box.
+      2) Use that box as a visual prompt to get a mask on the reference image.
+      3) Run text‑prompt segmentation on all images and keep only objects that
+         look similar to the reference mask (via color‑histogram similarity).
+    """
+    return find_similar_objects_by_example(ref_image=IMG_PATH)
+
+
 def _compute_mask_histogram(image_array: np.ndarray, mask: np.ndarray) -> np.ndarray | None:
     """
-    Compute a color histogram for the region defined by a mask.
+    Compute a color histogram for the region defined by a binary mask.
 
-    Returns a 1D normalized histogram vector, or None if the mask is empty.
+    Args:
+        image_array: RGB image as a NumPy array of shape (H, W, 3).
+        mask: Mask array (any shape broadcastable to (H, W)); values > 0.5
+              are treated as foreground.
+
+    Returns:
+        A 1D normalized histogram vector, or None if the mask is empty.
     """
     if mask.ndim > 2:
         mask = mask.squeeze()
@@ -122,27 +230,35 @@ def find_similar_objects_by_example(
     hist_threshold: float = 0.7,
 ):
     """
-    2‑stage workflow:
+    2‑stage exemplar workflow:
       1) Use a box prompt on a reference image to get a mask for the example object.
       2) Use a text prompt on all images and keep only detections whose appearance
          (color histogram) is similar to the example mask.
 
     Args:
-        ref_image: Reference image containing the object you drew the box_prompt on.
-                   Defaults to the sample image in images/.
-        hist_threshold: Similarity threshold (CORREL) in [‑1, 1]; higher = stricter.
+        ref_image: Reference image containing the object you draw the box on.
+                   Defaults to `IMG_PATH`.
+        hist_threshold: Similarity threshold (OpenCV CORREL) in [‑1, 1]; higher = stricter.
 
     Returns:
         List of (SegmentationResult, best_similarity) for images that contain at
         least one similar object.
     """
     if ref_image is None:
-        ref_image = SCRIPT_DIR / "images" / "1pole-down.jpg"
+        ref_image = IMG_PATH
 
-    # 1) Get reference mask from visual (box) prompt on the reference image
+    # 1) Let the user choose a visual box on the reference image (or fall back)
+    user_box = select_box_prompt(ref_image)
+    current_box = user_box if user_box is not None else box_prompt
+    if user_box is not None:
+        print(f"Using user‑selected box_prompt for exemplar: {current_box}")
+    else:
+        print(f"No box selected on exemplar; using fallback box_prompt: {current_box}")
+
+    # 2) Get reference mask from visual (box) prompt on the reference image
     ref_segmenter = SAMSegmenter(
         text_prompt=None,
-        box_prompt=box_prompt,
+        box_prompt=current_box,
         category_name=OBJECT,
         save_overlay=True,
     )
@@ -206,15 +322,25 @@ def find_similar_objects_by_example(
 
 
 def export_to_coco(results):
+    """
+    Export a list of segmentation results to a COCO JSON file.
+
+    Args:
+        results: List of `SegmentationResult` objects to export.
+    """
     exporter = COCOExporter(
         category_name=OBJECT,
-        dataset_name="My Dataset"
+        dataset_name="My Dataset",
     )
     exporter.export(results, "annotations.json")
 
 
-def custom_export(): # Segments and exports to COCO json
-    """Process without exports, then export with custom settings."""
+def custom_export():
+    """
+    Process a directory without automatic exports, then export with custom COCO settings.
+
+    This shows how to decouple segmentation from export configuration.
+    """
     print("\n" + "=" * 60)
     print("Custom Export")
     print("=" * 60)
@@ -239,15 +365,19 @@ def custom_export(): # Segments and exports to COCO json
 
 
 def main():
-# Uncomment any function that you would like to use
+    """
+    Entry point for running processing examples.
 
-    single_image_processing()
-    # simple_batch_processing()
+    Uncomment exactly one workflow below to run it.
+    """
+
+    single_image_processing_with_text_prompt()
+    # single_image_processing_with_box_prompt()
+    # text_prompt_batch_processing()
     # box_prompt_batch_processing()
     # find_similar_objects_by_example()
-    # export_to_coco()
+    # export_to_coco(text_prompt_batch_processing())
     # custom_export()
-    
 
 
 if __name__ == "__main__":
