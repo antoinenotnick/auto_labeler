@@ -23,7 +23,7 @@ The core functionality lives in the `sam_segmentation` package (`SAMSegmenter`, 
 ### 1. Clone the repository
 
 ```bash
-git clone <your-repo-url> auto-labeler
+git clone https://github.com/antoinenotnick/auto_labeler/tree/dev auto-labeler
 cd auto-labeler
 ```
 
