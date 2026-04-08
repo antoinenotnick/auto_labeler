@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 
 from sam_segmentation import SAMSegmenter, COCOExporter
+from sam_segmentation.visualizer import OverlayVisualizer
 from sam_segmentation.utils import load_image_with_exif
 
 # Get the directory where this script is located
@@ -13,7 +14,7 @@ SCRIPT_DIR = Path(__file__).parent
 IMG_PATH = SCRIPT_DIR / "images" / "pole_ex2.jpg"
 
 # Object label / text prompt
-OBJECT = "pole"
+OBJECT = ""
 
 # Fallback visual prompt: (x, y, w, h) in pixels from top‑left corner
 box_prompt = [0.0, 0.0, 0.0, 0.0]
@@ -92,11 +93,23 @@ def export_to_coco(results):
     Args:
         results: List of `SegmentationResult` objects to export.
     """
+    if results is None:
+        return
+
+    if not isinstance(results, list):
+        normalized_results = [results]
+    else:
+        normalized_results = results
+
+    if len(normalized_results) == 0:
+        print("No results to export to COCO.")
+        return
+
     exporter = COCOExporter(
         category_name=OBJECT,
         dataset_name="My Dataset",
     )
-    exporter.export([results], "annotations.json")
+    exporter.export(normalized_results, "annotations.json")
 
 
 def custom_export():
@@ -261,102 +274,50 @@ def _compute_mask_histogram(image_array: np.ndarray, mask: np.ndarray) -> np.nda
     return hist.flatten()
 
 
-def box_prompt_batch_processing(
-    ref_image=IMG_PATH,
-    hist_threshold: float = 0.7,
-):
+def box_prompt_batch_processing():
     """
-    2‑stage exemplar workflow:
-      1) Use a box prompt on a reference image to get a mask for the example object.
-      2) Use a text prompt on all images and keep only detections whose appearance
-         (color histogram) is similar to the example mask.
+    Batch-process all images by drawing a separate visual box prompt per image.
 
-    Args:
-        ref_image: Reference image containing the object you draw the box on.
-                   Defaults to `IMG_PATH`.
-        hist_threshold: Similarity threshold (OpenCV CORREL) in [‑1, 1]; higher = stricter.
-
-    Returns:
-        List of (SegmentationResult, best_similarity) for images that contain at
-        least one similar object.
+    For each image in `SCRIPT_DIR / "images"`:
+      1) Show the image in an interactive window.
+      2) Let the user draw a box (or skip with ESC/q).
+      3) Run `SAMSegmenter` once for that image using only the box prompt.
+      4) Save overlays (with masks; the box is only used for prompting, not required in overlays).
     """
-    if ref_image is None:
-        ref_image = IMG_PATH
-
-    # 1) Let the user choose a visual box on the reference image (or fall back)
-    user_box = select_box_prompt(ref_image)
-    current_box = user_box if user_box is not None else box_prompt
-    if user_box is not None:
-        print(f"Using user‑selected box_prompt for exemplar: {current_box}")
-    else:
-        print(f"No box selected on exemplar; using fallback box_prompt: {current_box}")
-
-    # 2) Get reference mask from visual (box) prompt on the reference image
-    ref_segmenter = SAMSegmenter(
-        text_prompt=None,
-        box_prompt=current_box,
-        category_name=OBJECT,
-        save_overlay=True,
-    )
-    ref_result = ref_segmenter.process_image(ref_image, output_dir=SCRIPT_DIR / "output")
-
-    if ref_result.num_detections == 0:
-        print("No detections found in reference image with the given box_prompt.")
+    images_dir = SCRIPT_DIR / "images"
+    image_paths = sorted(p for p in images_dir.iterdir() if p.is_file())
+    if not image_paths:
+        print(f"No images found in {images_dir}")
         return []
 
-    # Use the highest‑scoring mask from the reference image as the exemplar
-    ref_scores = ref_result.scores if ref_result.scores is not None else np.zeros(len(ref_result.masks))
-    best_idx = int(ref_scores.argmax())
-    ref_mask = ref_result.masks[best_idx]
+    results = []
+    for idx, image_path in enumerate(image_paths, start=1):
+        print(f"\n[{idx}/{len(image_paths)}] Selecting box for {image_path.name}")
+        user_box = select_box_prompt(image_path)
+        current_box = user_box if user_box is not None else box_prompt
+        if user_box is not None:
+            print(f"Using user-selected box_prompt: {current_box}")
+        else:
+            print(f"No box selected; using fallback box_prompt: {current_box}")
 
-    ref_img = load_image_with_exif(ref_result.image_path, enable_exif=True)
-    ref_img_arr = np.array(ref_img.convert("RGB"))
-    ref_hist = _compute_mask_histogram(ref_img_arr, ref_mask)
-    if ref_hist is None:
-        print("Reference mask is empty; cannot compute exemplar appearance.")
-        return []
+        segmenter = SAMSegmenter(
+            text_prompt=None,
+            box_prompt=current_box,
+            category_name=OBJECT or "object",
+            save_overlay=True,
+        )
+        result = segmenter.process_image(
+            image_path,
+            output_dir=SCRIPT_DIR / "output",
+        )
+        print(
+            f"  -> {result.image_path.name}: "
+            f"{result.num_detections} detections"
+        )
+        results.append(result)
 
-    # 2) Run text‑prompt segmentation on all images, then filter by similarity to exemplar
-    batch_segmenter = SAMSegmenter(
-        text_prompt=OBJECT,
-        box_prompt=None,
-        category_name=OBJECT,
-        save_overlay=True,
-    )
-    all_results = batch_segmenter.process_directory(
-        SCRIPT_DIR / "images",
-        output_dir=SCRIPT_DIR / "output",
-    )
-
-    matches: list[tuple[object, float]] = []
-
-    for res in all_results:
-        # Skip the reference image itself (optional)
-        if res.image_path == ref_result.image_path:
-            continue
-
-        img = load_image_with_exif(res.image_path, enable_exif=True)
-        img_arr = np.array(img.convert("RGB"))
-
-        best_sim = -1.0
-        for mask in res.masks:
-            hist = _compute_mask_histogram(img_arr, mask)
-            if hist is None:
-                continue
-            sim = cv2.compareHist(ref_hist.astype("float32"), hist.astype("float32"), cv2.HISTCMP_CORREL)
-            if sim > best_sim:
-                best_sim = sim
-
-        if best_sim >= hist_threshold:
-            matches.append((res, best_sim))
-
-    print(f"\nFound {len(matches)} images with at least one object similar to the exemplar.")
-    for res, sim in matches:
-        print(f"  - {res.image_path.name}: best similarity {sim:.3f}")
-
-    export_to_coco(matches)
-
-    return matches
+    export_to_coco(results)
+    return results
 
 
 def main():
