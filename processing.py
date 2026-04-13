@@ -436,7 +436,7 @@ def main():
     # visual_prompt_single_image_processing()
     # text_prompt_batch_processing()
     # visual_prompt_batch_processing()
-    box_prompt_batch_processing()
+    visual_prompt_batch_processing()
     # custom_export()
 
 
